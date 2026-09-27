@@ -346,7 +346,8 @@ const removeSessionFromProject = (project: Project, sessionIdToDelete: string): 
   return updatedProject;
 };
 
-const VALID_TABS: Set<string> = new Set(['chat', 'files', 'shell', 'git', 'tasks', 'browser']);
+// Only Chat has a tab in this fork, so a persisted hidden tab falls back to Chat.
+const VALID_TABS: Set<string> = new Set(['chat']);
 
 const isValidTab = (tab: string): tab is AppTab => {
   return VALID_TABS.has(tab) || tab.startsWith('plugin:');
