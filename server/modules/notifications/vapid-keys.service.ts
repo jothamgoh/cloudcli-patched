@@ -27,8 +27,10 @@ function getPublicKey() {
 
 function configureWebPush() {
   const keys = ensureVapidKeys();
+  // Apple's push service rejects VAPID subjects on reserved domains such as `.local`
+  // with 403 BadJwtToken, so iOS devices never receive notifications.
   webPush.setVapidDetails(
-    'mailto:noreply@claudecodeui.local',
+    process.env.VAPID_SUBJECT || 'https://cloudcli.ai',
     keys.publicKey,
     keys.privateKey
   );
