@@ -498,6 +498,7 @@ function ChatInterface({
           availablePermissionModes={availablePermissionModes}
           onSelectPermissionMode={selectPermissionMode}
           providerLabel={selectedProviderLabel}
+          canSteer={provider === 'claude'}
           effort={currentProviderEffort}
           availableEffortOptions={currentProviderEffortOptions}
           onSelectEffort={handleSelectComposerEffort}

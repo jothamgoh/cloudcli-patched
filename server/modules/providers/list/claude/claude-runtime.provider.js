@@ -311,8 +311,9 @@ function mapCliOptionsToSDK(options = {}) {
  * @param {Object} queryInstance - SDK query instance
  * @param {Object} writer - WebSocket writer for reconnect support
  * @param {Function} releaseInput - Closes the held stdin stream so the CLI can exit
+ * @param {Function} steer - Delivers a user message into the running turn
  */
-function addSession(sessionId, queryInstance, writer = null, releaseInput = null) {
+function addSession(sessionId, queryInstance, writer = null, releaseInput = null, steer = null) {
   const existing = activeSessions.get(sessionId);
   // A different live instance under the same key means an earlier run was
   // superseded without being stopped (e.g. an abort that raced run setup and
@@ -340,7 +341,8 @@ function addSession(sessionId, queryInstance, writer = null, releaseInput = null
     status: 'active',
     writer,
     // Re-registered mid-run once the provider session id lands; keep the closer.
-    releaseInput: releaseInput || carried?.releaseInput || null
+    releaseInput: releaseInput || carried?.releaseInput || null,
+    steer: steer || carried?.steer || null
   });
 }
 
@@ -614,18 +616,47 @@ async function buildPromptMessages(command, images, files, cwd) {
  * @returns {{ stream: AsyncIterable, release: () => void }} Stream plus its closer
  */
 function createHeldPromptStream(messages) {
-  let release;
-  const held = new Promise((resolve) => { release = resolve; });
+  const pending = [];
+  let released = false;
+  let wake = null;
+  const notify = () => {
+    const resume = wake;
+    wake = null;
+    resume?.();
+  };
 
   const stream = (async function* () {
     for (const message of messages) {
       yield message;
     }
-    // Keeps stdin open — the CLI stays alive until release() is called.
-    await held;
+    // Keeps stdin open — the CLI stays alive until release() is called. Messages
+    // pushed meanwhile reach the CLI mid-turn, which is how steering works.
+    while (true) {
+      while (pending.length > 0) {
+        yield pending.shift();
+      }
+      if (released) {
+        return;
+      }
+      await new Promise((resolve) => { wake = resolve; });
+    }
   })();
 
-  return { stream, release };
+  const release = () => {
+    released = true;
+    notify();
+  };
+
+  const push = (message) => {
+    if (released) {
+      return false;
+    }
+    pending.push(message);
+    notify();
+    return true;
+  };
+
+  return { stream, release, push };
 }
 
 /**
@@ -911,9 +942,20 @@ async function queryClaudeSDK(command, options = {}, ws, context) {
       });
     }
 
+    // Steering only makes sense while the turn is still running; once its
+    // `result` is out, a pushed message would start an untracked new turn.
+    const steerTurn = async (steerCommand) => {
+      const abortPending = sessionKey() ? abortedSessionIds.has(sessionKey()) : false;
+      if (turnCompleteSent || abortPending) {
+        return false;
+      }
+      const [steerMessage] = await buildPromptMessages(steerCommand, [], [], options.cwd);
+      return heldPrompt.push(steerMessage);
+    };
+
     // Track the query instance for abort capability
     if (sessionKey()) {
-      addSession(sessionKey(), queryInstance, ws, releasePromptStream);
+      addSession(sessionKey(), queryInstance, ws, releasePromptStream, steerTurn);
     }
 
     // Process streaming messages
@@ -923,7 +965,7 @@ async function queryClaudeSDK(command, options = {}, ws, context) {
       if (message.session_id && !capturedSessionId) {
 
         capturedSessionId = message.session_id;
-        addSession(sessionKey(), queryInstance, ws, releasePromptStream);
+        addSession(sessionKey(), queryInstance, ws, releasePromptStream, steerTurn);
 
         // Set session ID on writer
         if (ws.setSessionId && typeof ws.setSessionId === 'function') {
@@ -1144,6 +1186,20 @@ async function abortClaudeSDKSession(sessionId) {
  * @param {string} sessionId - Session identifier
  * @returns {boolean} True if session is active
  */
+/**
+ * Delivers a user message into a session's running turn.
+ * @param {string} sessionId - App session identifier
+ * @param {string} command - Message text
+ * @returns {Promise<boolean>} Whether the message was accepted
+ */
+async function steerClaudeSDKSession(sessionId, command) {
+  const session = getSession(sessionId);
+  if (!session || session.status !== 'active' || !session.steer) {
+    return false;
+  }
+  return session.steer(command);
+}
+
 function isClaudeSDKSessionActive(sessionId) {
   const session = getSession(sessionId);
   return session && session.status === 'active';
@@ -1197,6 +1253,7 @@ function reconnectSessionWriter(sessionId, newRawWs) {
 export const claudeRuntime = {
   run: queryClaudeSDK,
   abort: abortClaudeSDKSession,
+  steer: steerClaudeSDKSession,
   permissions: {
     resolve: resolveToolApproval,
     listPending: getPendingApprovalsForSession,

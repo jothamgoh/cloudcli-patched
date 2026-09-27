@@ -56,6 +56,8 @@ type ChatComposerProps = {
   availablePermissionModes: PermissionMode[];
   onSelectPermissionMode: (mode: PermissionMode) => void;
   providerLabel: string;
+  /** Whether a message sent mid-turn steers the running turn instead of queueing. */
+  canSteer?: boolean;
   effort: string;
   availableEffortOptions: NonNullable<ProviderModelOption['effort']>['values'];
   onSelectEffort: (effort: string) => void;
@@ -131,6 +133,7 @@ export default function ChatComposer({
   availablePermissionModes,
   onSelectPermissionMode,
   providerLabel,
+  canSteer = false,
   effort,
   availableEffortOptions,
   onSelectEffort,
@@ -253,14 +256,19 @@ export default function ChatComposer({
 
   const hasQueuedDraft = Boolean(queuedDraft);
   const canQueueDraft = isLoading && Boolean(input.trim() || attachedFiles.length > 0);
-  const submitHint = canQueueDraft
+  const willSteer = canQueueDraft && canSteer && attachedFiles.length === 0 && !input.trimStart().startsWith('/');
+  const submitHint = willSteer
+    ? t('input.hintText.steer', { defaultValue: 'Enter to steer the current reply' })
+    : canQueueDraft
     ? hasQueuedDraft
       ? t('input.hintText.updateQueued', { defaultValue: 'Enter to update queued message' })
       : t('input.hintText.queue', { defaultValue: 'Enter to queue your next message' })
     : sendByCtrlEnter
       ? t('input.hintText.ctrlEnter')
       : t('input.hintText.enter');
-  const submitAriaLabel = canQueueDraft
+  const submitAriaLabel = willSteer
+    ? t('input.steer', { defaultValue: 'Steer current reply' })
+    : canQueueDraft
     ? hasQueuedDraft
       ? t('input.queue.update', { defaultValue: 'Update queued message' })
       : t('input.queue.sendNext', { defaultValue: 'Queue next message' })

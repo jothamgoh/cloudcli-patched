@@ -91,6 +91,11 @@ export function createProviderRuntimeService(
       return Boolean(await dependencies.resolveProvider(providerName).runtime.abort(sessionId));
     },
 
+    async steer(providerName: LLMProvider, sessionId: string, command: string): Promise<boolean> {
+      const runtime = dependencies.resolveProvider(providerName).runtime;
+      return Boolean(await runtime.steer?.(sessionId, command));
+    },
+
     resolveToolApproval(requestId: string, decision: ProviderPermissionDecision): void {
       for (const provider of dependencies.listProviders()) {
         provider.runtime.permissions?.resolve(requestId, decision);

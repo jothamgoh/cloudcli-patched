@@ -631,6 +631,36 @@ export function useChatComposerState({
         return;
       }
 
+      // A Claude turn is in flight: steer it with this message. Claude reads it
+      // at its next step instead of after the turn ends. Attachments and slash
+      // commands still queue, since steering only carries plain text.
+      const steerSessionId = selectedSession?.id || currentSessionId || null;
+      if (
+        isLoading
+        && !queuedSubmission
+        && provider === 'claude'
+        && steerSessionId
+        && currentAttachments.length === 0
+        && !currentInput.trimStart().startsWith('/')
+      ) {
+        addMessage({ type: 'user', content: currentInput, timestamp: new Date() });
+        sendMessage({ type: 'chat.steer', sessionId: steerSessionId, content: currentInput });
+        recordSentMessage(currentInput, steerSessionId);
+        setInput('');
+        inputValueRef.current = '';
+        resetCommandMenuState();
+        setIsTextareaExpanded(false);
+        if (textareaRef.current) {
+          textareaRef.current.style.height = 'auto';
+        }
+        if (draftScopeRef.current) {
+          writeDraftText(draftScopeRef.current, '');
+        }
+        setIsUserScrolledUp(false);
+        setTimeout(() => scrollToBottom(), 100);
+        return;
+      }
+
       // A turn is already in flight: stash this message instead of sending it.
       // Upload attached files now so the queued record contains durable image
       // descriptors that can be sent even if another session is open later.

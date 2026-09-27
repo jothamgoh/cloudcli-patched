@@ -73,6 +73,7 @@ export type ProviderRuntimeGateway = {
     writer: ProviderRuntimeWriter,
   ): Promise<unknown>;
   abort(provider: LLMProvider, sessionId: string): Promise<boolean>;
+  steer(provider: LLMProvider, sessionId: string, command: string): Promise<boolean>;
   resolveToolApproval(requestId: string, payload: ProviderPermissionDecision): void;
   getPendingApprovalsForSession(sessionId: string): unknown[];
 };
@@ -408,6 +409,44 @@ async function handleChatEditSend(
 }
 
 /**
+ * Handles `chat.steer`: delivers a message into the session's running turn so
+ * the agent picks it up at its next step instead of after the turn ends. When
+ * the turn finished in the meantime, the message is sent as a normal turn.
+ */
+async function handleChatSteer(
+  ws: WebSocket,
+  userId: string | number | null,
+  data: AnyRecord,
+  dependencies: ChatWebSocketDependencies
+): Promise<void> {
+  const resolved = resolveSendTarget(ws, data, dependencies, 'chat.steer');
+  if (!resolved) {
+    return;
+  }
+
+  const content = typeof data.content === 'string' ? data.content : '';
+  if (!content.trim()) {
+    sendProtocolError(ws, 'CONTENT_REQUIRED', 'chat.steer requires content.', resolved.sessionId);
+    return;
+  }
+
+  if (!chatRunRegistry.isProcessing(resolved.sessionId)) {
+    await dispatchRun(ws, userId, resolved.sessionId, resolved.session, data, dependencies);
+    return;
+  }
+
+  const steered = await dependencies.runtime.steer(resolved.provider, resolved.sessionId, content);
+  if (!steered) {
+    sendProtocolError(
+      ws,
+      'STEER_UNAVAILABLE',
+      'Claude could not take this message mid-reply. Send it again once the reply finishes.',
+      resolved.sessionId
+    );
+  }
+}
+
+/**
  * Handles `chat.abort`: cancels the run for one app session and emits the
  * terminal `complete` on its behalf (runtimes skip their own complete for
  * aborted runs, and the registry drops any duplicate).
@@ -527,6 +566,7 @@ function handlePermissionResponse(data: AnyRecord, dependencies: ChatWebSocketDe
  * Inbound protocol (client to server):
  * - `chat.send`                { sessionId, content, options? }
  * - `chat.abort`               { sessionId }
+ * - `chat.steer`               { sessionId, content }
  * - `chat.subscribe`           { sessions: [{ sessionId, lastSeq? }] }
  * - `chat.permission-response` { requestId, allow, updatedInput?, message?, rememberEntry? }
  *
@@ -629,6 +669,9 @@ export function handleChatConnection(
           return;
         case 'chat.abort':
           await handleChatAbort(ws, data, dependencies);
+          return;
+        case 'chat.steer':
+          await handleChatSteer(ws, userId, data, dependencies);
           return;
         case 'chat.subscribe':
           handleChatSubscribe(ws, data, dependencies);

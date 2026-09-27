@@ -35,6 +35,11 @@ export interface IProviderRuntime {
     context: ProviderRuntimeContext,
   ): Promise<unknown>;
   abort(sessionId: string): boolean | Promise<boolean>;
+  /**
+   * Delivers a user message into the session's running turn, which the agent
+   * picks up at its next step. Returns false when the session cannot be steered.
+   */
+  steer?(sessionId: string, command: string): boolean | Promise<boolean>;
   permissions?: ProviderRuntimePermissionGateway;
 }
 
