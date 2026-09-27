@@ -1,8 +1,6 @@
-import assert from 'node:assert/strict';
+import { assert, test } from 'vitest';
 
-import { test } from 'vitest';
-
-import { groupConsecutiveTools, isToolGroupItem } from '@/modules/chat/utils/toolGrouping';
+import { MIXED_TOOL_GROUP, groupConsecutiveTools, isToolGroupItem } from '@/modules/chat/utils/toolGrouping';
 import type { ChatMessage } from '@/shared/types';
 
 /**
@@ -41,10 +39,10 @@ test('a run of same-tool calls is grouped and carries a precomputed preview', ()
     toolMessage('Read', { file_path: '/b.ts' }),
   ]);
 
-  assert.equal(items.length, 1);
+  assert.strictEqual(items.length, 1);
   const [group] = items;
   assert.ok(isToolGroupItem(group));
-  assert.equal(group.preview, '/a.ts, /b.ts');
+  assert.strictEqual(group.preview, '/a.ts, /b.ts');
 });
 
 test('a group of more than two calls reports the remainder', () => {
@@ -57,24 +55,41 @@ test('a group of more than two calls reports the remainder', () => {
 
   const [group] = items;
   assert.ok(isToolGroupItem(group));
-  assert.equal(group.preview, '/a.ts, /b.ts, +2 more');
+  assert.strictEqual(group.preview, '/a.ts, /b.ts, +2 more');
 });
 
-test('a single tool call is not grouped', () => {
+test('a single tool call still folds into a group row', () => {
   const items = groupConsecutiveTools([toolMessage('Read', { file_path: '/a.ts' })]);
 
-  assert.equal(items.length, 1);
-  assert.equal(isToolGroupItem(items[0]), false);
+  assert.strictEqual(items.length, 1);
+  assert.ok(isToolGroupItem(items[0]));
+  assert.strictEqual(items[0].toolName, 'Read');
 });
 
-test('different tools are not grouped together', () => {
+test('different tools fold into one mixed group', () => {
   const items = groupConsecutiveTools([
     toolMessage('Read', { file_path: '/a.ts' }),
     toolMessage('Write', { file_path: '/b.ts' }),
   ]);
 
-  assert.equal(items.length, 2);
-  assert.equal(items.every((item) => !isToolGroupItem(item)), true);
+  assert.strictEqual(items.length, 1);
+  const [group] = items;
+  assert.ok(isToolGroupItem(group));
+  assert.strictEqual(group.toolName, MIXED_TOOL_GROUP);
+  assert.strictEqual(group.messages.length, 2);
+});
+
+test('plans, todo lists and questions stay visible between groups', () => {
+  const items = groupConsecutiveTools([
+    toolMessage('Read', { file_path: '/a.ts' }),
+    toolMessage('TodoWrite', { todos: [] }),
+    toolMessage('Read', { file_path: '/b.ts' }),
+  ]);
+
+  assert.strictEqual(items.length, 3);
+  assert.ok(isToolGroupItem(items[0]));
+  assert.strictEqual(isToolGroupItem(items[1]), false);
+  assert.ok(isToolGroupItem(items[2]));
 });
 
 test('a text turn splits a run', () => {
@@ -84,8 +99,8 @@ test('a text turn splits a run', () => {
     toolMessage('Read', { file_path: '/b.ts' }),
   ]);
 
-  assert.equal(items.length, 3);
-  assert.equal(items.filter(isToolGroupItem).length, 0);
+  assert.strictEqual(items.length, 3);
+  assert.strictEqual(items.filter(isToolGroupItem).length, 2);
 });
 
 test('an unparsable tool input does not throw while grouping', () => {
@@ -100,7 +115,7 @@ test('an unparsable tool input does not throw while grouping', () => {
   // stays a string, so there is nothing to show. The group must still form, the
   // raw JSON must not leak into the summary line, and both calls must be
   // accounted for as unnamed.
-  assert.equal(group.preview, '+2 more');
+  assert.strictEqual(group.preview, '+2 more');
 });
 
 test('a tool with no config is previewed by what it operated on', () => {
@@ -115,7 +130,7 @@ test('a tool with no config is previewed by what it operated on', () => {
 
   const [group] = items;
   assert.ok(isToolGroupItem(group));
-  assert.equal(group.preview, 'npm test, /repo/a.ts');
+  assert.strictEqual(group.preview, 'npm test, /repo/a.ts');
 });
 
 test('the group carries the run\u2019s first timestamp, which is what the search jump matches on', () => {
@@ -126,7 +141,7 @@ test('the group carries the run\u2019s first timestamp, which is what the search
 
   const [group] = items;
   assert.ok(isToolGroupItem(group));
-  assert.equal(group.timestamp, '2024-01-01T10:00:00.000Z');
+  assert.strictEqual(group.timestamp, '2024-01-01T10:00:00.000Z');
 });
 
 test('a call the line cannot name is counted in the remainder', () => {
@@ -139,7 +154,7 @@ test('a call the line cannot name is counted in the remainder', () => {
 
   const [group] = items;
   assert.ok(isToolGroupItem(group));
-  assert.equal(group.preview, '/a.ts, +1 more');
+  assert.strictEqual(group.preview, '/a.ts, +1 more');
 });
 
 test('the named calls plus the remainder always add up to the group size', () => {
@@ -154,7 +169,7 @@ test('the named calls plus the remainder always add up to the group size', () =>
 
   const [group] = items;
   assert.ok(isToolGroupItem(group));
-  assert.equal(group.preview, '/b.ts, +2 more');
+  assert.strictEqual(group.preview, '/b.ts, +2 more');
 });
 
 test('a group that can name nothing still accounts for every call', () => {
@@ -168,7 +183,7 @@ test('a group that can name nothing still accounts for every call', () => {
 
   const [group] = items;
   assert.ok(isToolGroupItem(group));
-  assert.equal(group.preview, '+5 more');
+  assert.strictEqual(group.preview, '+5 more');
 });
 
 test('hidden reasoning between two tool calls does not split the run', () => {
@@ -181,8 +196,8 @@ test('hidden reasoning between two tool calls does not split the run', () => {
     toolMessage('Read', { file_path: '/b.ts' }),
   ], false);
 
-  assert.equal(items.length, 1);
-  assert.equal(isToolGroupItem(items[0]), true);
+  assert.strictEqual(items.length, 1);
+  assert.strictEqual(isToolGroupItem(items[0]), true);
 });
 
 test('reasoning the user can see does split the run', () => {
@@ -192,8 +207,8 @@ test('reasoning the user can see does split the run', () => {
     toolMessage('Read', { file_path: '/b.ts' }),
   ], true);
 
-  assert.equal(items.length, 3);
-  assert.equal(items.filter(isToolGroupItem).length, 0);
+  assert.strictEqual(items.length, 3);
+  assert.strictEqual(items.filter(isToolGroupItem).length, 2);
 });
 
 test('showThinking defaults to on, so a caller that omits it does not collapse a visible turn', () => {
@@ -203,7 +218,7 @@ test('showThinking defaults to on, so a caller that omits it does not collapse a
     toolMessage('Read', { file_path: '/b.ts' }),
   ]);
 
-  assert.equal(withThinkingShown.length, 3);
+  assert.strictEqual(withThinkingShown.length, 3);
 });
 
 test('a subagent container is never absorbed into a group', () => {
@@ -214,6 +229,7 @@ test('a subagent container is never absorbed into a group', () => {
     { ...toolMessage('Task', { prompt: 'b' }), isSubagentContainer: true },
   ]);
 
-  assert.equal(items.length, 2);
-  assert.equal(items.filter(isToolGroupItem).length, 0);
+  assert.strictEqual(items.length, 2);
+  assert.strictEqual(isToolGroupItem(items[1]), false);
+  assert.strictEqual((items[1] as ChatMessage).isSubagentContainer, true);
 });

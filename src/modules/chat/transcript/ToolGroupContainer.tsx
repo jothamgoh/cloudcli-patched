@@ -7,6 +7,7 @@ import MessageComponent from '@/modules/chat/transcript/MessageComponent';
 import { useIsExportingTranscript } from '@/modules/chat/context/TranscriptRenderContext';
 import { DiffStatsBadge } from '@/modules/chat/tools/DiffStatsBadge';
 import { parseToolPayload, summarizeDiff } from '@/modules/chat/utils/messageTransforms';
+import { MIXED_TOOL_GROUP } from '@/modules/chat/utils/toolGrouping';
 
 type ToolGroupContainerProps = {
   group: ToolGroupItem;
@@ -31,21 +32,21 @@ type ToolGroupContainerProps = {
  * not render a diff at all.
  */
 function useGroupDiffStats(
-  toolName: string,
   messages: ChatMessage[],
   createDiff: (oldStr: string, newStr: string) => DiffLine[],
 ): DiffStats | null {
   return useMemo(() => {
-    const config = getToolConfig(toolName).input;
-    if (config.contentType !== 'diff' || !config.getContentProps) {
-      return null;
-    }
-
     let added = 0;
     let removed = 0;
     let counted = 0;
 
+    // Per message rather than per group: a mixed run can hold Edits, Writes and
+    // Reads, and only the ones that render a diff contribute.
     for (const message of messages) {
+      const config = getToolConfig(message.toolName || 'UnknownTool').input;
+      if (config.contentType !== 'diff' || !config.getContentProps) {
+        continue;
+      }
       const contentProps = config.getContentProps(parseToolPayload(message.toolInput) ?? {});
       if (typeof contentProps?.oldContent !== 'string' || typeof contentProps?.newContent !== 'string') {
         continue;
@@ -58,7 +59,7 @@ function useGroupDiffStats(
     }
 
     return counted > 0 ? { added, removed } : null;
-  }, [createDiff, messages, toolName]);
+  }, [createDiff, messages]);
 }
 
 function getToolGroupIcon(icon: string | undefined, toolName: string): string {
@@ -92,39 +93,38 @@ function ToolGroupContainer({
   // has no way to ask.
   const [isExpanded, setIsExpanded] = useState(false);
   const showChildren = isExpanded || isExporting;
-  const config = getToolConfig(group.toolName).input;
-  const label = config.label || group.toolName;
-  const borderClass = config.colorScheme?.border || 'border-border';
-  const iconClass = config.colorScheme?.icon || 'text-muted-foreground';
-  const icon = getToolGroupIcon(config.icon, group.toolName);
+  const isMixed = group.toolName === MIXED_TOOL_GROUP;
+  const config = getToolConfig(isMixed ? 'Default' : group.toolName).input;
+  const count = group.messages.length;
+  const label = isMixed ? `${count} steps` : config.label || group.toolName;
+  const icon = isMixed ? '\u22EF' : getToolGroupIcon(config.icon, group.toolName);
+  const failedCount = group.messages.filter((message) => message.toolResult?.isError).length;
 
   const preview = group.preview;
-  const groupDiffStats = useGroupDiffStats(group.toolName, group.messages, createDiff);
+  const groupDiffStats = useGroupDiffStats(group.messages, createDiff);
 
   return (
     <div className="chat-message tool px-3 sm:px-0" data-message-timestamp={group.timestamp || undefined}>
       <button
         type="button"
-        className={`group flex w-full items-center gap-2 border-l-2 ${borderClass} rounded-r-md bg-muted/25 px-3 py-2 text-left transition-colors hover:bg-muted/40 dark:bg-muted/10 dark:hover:bg-muted/20`}
+        className="group flex w-full items-center gap-2 rounded-md px-1 py-1 text-left text-muted-foreground transition-colors hover:bg-muted/30 hover:text-foreground"
         onClick={() => setIsExpanded((current) => !current)}
         aria-expanded={isExpanded}
       >
         <ChevronRight
-          className={`h-3.5 w-3.5 flex-shrink-0 text-muted-foreground transition-transform ${isExpanded ? 'rotate-90' : ''}`}
+          className={`h-3.5 w-3.5 flex-shrink-0 transition-transform ${isExpanded ? 'rotate-90' : ''}`}
           aria-hidden
         />
-        <span className={`${iconClass} flex h-5 w-5 flex-shrink-0 items-center justify-center rounded bg-background/80 text-xs font-medium`}>
-          {icon}
-        </span>
-        <span className="min-w-0 flex-shrink-0 text-xs font-medium text-foreground">{label}</span>
-        <span className="flex-shrink-0 rounded-full bg-muted px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground">
-          x{group.messages.length}
-        </span>
+        <span className="flex h-4 w-4 flex-shrink-0 items-center justify-center text-[11px]">{icon}</span>
+        <span className="min-w-0 flex-shrink-0 text-xs font-medium">{label}</span>
+        {!isMixed && count > 1 && (
+          <span className="flex-shrink-0 text-[11px] text-muted-foreground/70">x{count}</span>
+        )}
         {preview && (
-          <>
-            <span className="text-[10px] text-muted-foreground/40">/</span>
-            <span className="min-w-0 truncate font-mono text-xs text-muted-foreground">{preview}</span>
-          </>
+          <span className="min-w-0 truncate font-mono text-xs text-muted-foreground/70">{preview}</span>
+        )}
+        {failedCount > 0 && (
+          <span className="flex-shrink-0 text-[11px] text-red-500">{failedCount} failed</span>
         )}
         {groupDiffStats && <DiffStatsBadge stats={groupDiffStats} className="ml-auto pl-2" />}
       </button>

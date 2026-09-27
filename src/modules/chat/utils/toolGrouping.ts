@@ -1,7 +1,16 @@
 import type { ChatMessage, ToolGroupItem } from '@/shared/types';
 import { getToolConfig } from '@/modules/chat/tools/configs/toolConfigs';
 
-export const TOOL_GROUP_THRESHOLD = 2;
+// Every run of tool calls collapses into one row, even a single call, so the
+// transcript reads as conversation with the work folded away (CodexUI-style).
+export const TOOL_GROUP_THRESHOLD = 1;
+
+/** Group label used when a run mixes different tools. */
+export const MIXED_TOOL_GROUP = 'mixed';
+
+// Tools whose inline rendering is the point (a plan to approve, a todo list, a
+// question) stay visible instead of folding into a group row.
+const ALWAYS_VISIBLE_TOOLS = new Set(['TodoWrite', 'AskUserQuestion', 'ExitPlanMode', 'exit_plan_mode']);
 
 /** How many of a group's tool inputs the collapsed summary line spells out. */
 const PREVIEWED_TOOL_COUNT = 2;
@@ -14,7 +23,12 @@ export function isToolGroupItem(item: MessageListItem): item is ToolGroupItem {
 }
 
 function isGroupableToolMessage(message: ChatMessage): message is ChatMessage & { toolName: string } {
-  return Boolean(message.isToolUse && message.toolName && !message.isSubagentContainer);
+  return Boolean(
+    message.isToolUse
+      && message.toolName
+      && !message.isSubagentContainer
+      && !ALWAYS_VISIBLE_TOOLS.has(message.toolName),
+  );
 }
 
 // Messages that render nothing (e.g. reasoning hidden when showThinking is off)
@@ -106,7 +120,7 @@ export function groupConsecutiveTools(
         continue;
       }
 
-      if (isGroupableToolMessage(candidate) && candidate.toolName === message.toolName) {
+      if (isGroupableToolMessage(candidate)) {
         run.push(candidate);
         nextIndex += 1;
         continue;
@@ -118,7 +132,7 @@ export function groupConsecutiveTools(
     if (run.length >= TOOL_GROUP_THRESHOLD) {
       items.push({
         _isGroup: true,
-        toolName: message.toolName,
+        toolName: run.every((m) => m.toolName === message.toolName) ? message.toolName : MIXED_TOOL_GROUP,
         messages: run,
         timestamp: message.timestamp,
         preview: buildGroupPreview(run),
